@@ -1,0 +1,86 @@
+{
+    "name": "todo_plugin",
+    "version": "1.0.1",
+  "description": "待办事项管理插件：添加、列出、完成、提醒",
+  "author": "MoFox Team",
+  "categories": ["tool"],
+  "tags": ["todo", "reminder", "schedule"],
+  "dependencies": {
+        "plugins": [],
+        "components": []
+    },
+    "include": [
+        {
+            "component_type": "service",
+            "component_name": "todo_service",
+            "dependencies": [],
+            "enabled": true
+        },
+        {
+            "component_type": "service",
+            "component_name": "bot_todo_service",
+            "dependencies": [],
+            "enabled": true
+        },
+        {
+            "component_type": "command",
+            "component_name": "todo",
+            "dependencies": [
+                "todo_plugin:service:todo_service"
+            ],
+            "enabled": true
+        },
+        {
+            "component_type": "event_handler",
+            "component_name": "relay_todo_bridge",
+            "dependencies": [
+                "todo_plugin:service:bot_todo_service"
+            ],
+            "enabled": true
+        },
+        {
+            "component_type": "action",
+            "component_name": "add_user_todo",
+            "dependencies": [
+                "todo_plugin:service:todo_service"
+            ],
+            "enabled": true
+        },
+        {
+            "component_type": "action",
+            "component_name": "list_user_todos",
+            "dependencies": [
+                "todo_plugin:service:todo_service"
+            ],
+            "enabled": true
+        },
+        {
+            "component_type": "action",
+            "component_name": "mark_todo_done",
+            "dependencies": [
+                "todo_plugin:service:todo_service"
+            ],
+            "enabled": true
+        },
+        {
+            "component_type": "action",
+            "component_name": "schedule_bot_task",
+            "dependencies": [
+                "todo_plugin:service:bot_todo_service"
+            ],
+            "enabled": true
+        },
+        {
+            "component_type": "action",
+            "component_name": "list_bot_todos",
+            "dependencies": [
+                "todo_plugin:service:bot_todo_service"
+            ],
+            "enabled": true
+        }
+    ],
+    "entry_point": "plugin.py",
+    "min_core_version": "1.0.0",
+    "python_dependencies": [],
+    "dependencies_required": true
+}
