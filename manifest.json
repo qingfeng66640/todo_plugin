@@ -1,11 +1,17 @@
 {
     "name": "todo_plugin",
-    "version": "1.0.1",
-  "description": "待办事项管理插件：添加、列出、完成、提醒",
-  "author": "MoFox Team",
-  "categories": ["tool"],
-  "tags": ["todo", "reminder", "schedule"],
-  "dependencies": {
+    "version": "1.0.2",
+    "description": "待办事项管理插件：添加、列出、完成、提醒",
+    "author": "MoFox Team",
+    "categories": [
+        "tool"
+    ],
+    "tags": [
+        "todo",
+        "reminder",
+        "schedule"
+    ],
+    "dependencies": {
         "plugins": [],
         "components": []
     },
