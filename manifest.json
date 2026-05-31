@@ -1,8 +1,13 @@
 {
     "name": "todo_plugin",
-    "version": "1.0.2",
+    "version": "1.0.3",
+    "display_name": "待办事项助手",
+    "summary": "面向个人和机器人任务的待办事项、提醒与定时任务管理插件",
     "description": "待办事项管理插件：添加、列出、完成、提醒",
-    "author": "MoFox Team",
+    "author": "qf",
+    "maintainers": [
+        "qf"
+    ],
     "categories": [
         "tool"
     ],

@@ -9,8 +9,7 @@ from __future__ import annotations
 import asyncio
 from typing import cast
 
-from src.core.components import BasePlugin, register_plugin
-from src.core.prompt import get_system_reminder_store
+from src.app.plugin_system.base import BasePlugin, register_plugin
 from src.kernel.concurrency import get_task_manager
 from src.kernel.logger import get_logger
 
@@ -38,9 +37,10 @@ class TodoPlugin(BasePlugin):
 
     plugin_name: str = "todo_plugin"
     plugin_description: str = "待办事项管理 + Bot 待办看板：添加、列出、完成、提醒、自我计划"
-    plugin_version: str = "1.0.0"
+    plugin_version: str = "1.0.3"
 
-    configs: list[type] = [TodoPluginConfig]
+    configs: list[type]
+    configs = [TodoPluginConfig]
     dependent_components: list[str] = []
 
     def __init__(self, config: TodoPluginConfig | None = None) -> None:
@@ -49,6 +49,8 @@ class TodoPlugin(BasePlugin):
         self._register_task_id: str | None = None
 
     def get_components(self) -> list[type]:
+        """Return component classes provided by this plugin."""
+
         return [
             TodoService,
             BotTodoService,
@@ -78,16 +80,18 @@ class TodoPlugin(BasePlugin):
         if self._schedule_id:
             try:
                 await get_unified_scheduler().remove_schedule(self._schedule_id)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(f"移除 todo 定时任务失败: {exc}")
             self._schedule_id = None
 
         if self._register_task_id:
             try:
                 get_task_manager().cancel_task(self._register_task_id)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(f"取消 todo 注册任务失败: {exc}")
             self._register_task_id = None
+
+        from src.core.prompt import get_system_reminder_store
 
         get_system_reminder_store().delete(_BOARD_BUCKET, _BOARD_NAME)
 
@@ -139,6 +143,8 @@ class TodoPlugin(BasePlugin):
 
 async def sync_todo_board() -> None:
     """Keep ordinary chat prompts free of cross-stream todo content."""
+
+    from src.core.prompt import get_system_reminder_store
 
     content = (
         "待办和个人计划按聊天流隔离保存。"

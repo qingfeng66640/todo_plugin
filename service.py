@@ -14,11 +14,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.app.plugin_system.api import send_api, storage_api
-from src.app.plugin_system.api.llm_api import create_llm_request, get_model_set_by_task
+from src.app.plugin_system.api.llm_api import create_llm_request, exec_llm_usable, get_model_set_by_task
 from src.app.plugin_system.api.log_api import get_logger
-from src.core.components.base.service import BaseService
+from src.app.plugin_system.base import BaseService
 from src.core.config import get_core_config
-from src.core.utils.llm_tool_call import exec_llm_usable
 from src.kernel.llm import LLMPayload, ROLE, Text, ToolResult
 
 from .config import TodoPluginConfig
@@ -44,19 +43,27 @@ class BotPlanExecutionResult:
 
 
 def _uid() -> str:
+    """Return a short opaque todo identifier."""
+
     return uuid.uuid4().hex[:8]
 
 
 async def _load_all() -> dict[str, list[dict[str, Any]]]:
+    """Load all user todo partitions from plugin storage."""
+
     data = await storage_api.load_json(_STORE_NAME, _DATA_KEY)
     return data if data is not None else {}
 
 
 async def _save_all(data: dict[str, list[dict[str, Any]]]) -> None:
+    """Persist all user todo partitions to plugin storage."""
+
     await storage_api.save_json(_STORE_NAME, _DATA_KEY, data)
 
 
 def _now() -> float:
+    """Return the current Unix timestamp."""
+
     return time.time()
 
 
@@ -142,15 +149,23 @@ class TodoService(BaseService):
         return sorted(todos, key=lambda t: (-t.get("priority", 3), t.get("created_at", 0)))
 
     async def mark_done(self, stream_id: str, todo_uid: str) -> bool:
+        """Mark a user todo as done."""
+
         return await self._update_status(stream_id, todo_uid, "done")
 
     async def mark_undo(self, stream_id: str, todo_uid: str) -> bool:
+        """Restore a user todo to pending."""
+
         return await self._update_status(stream_id, todo_uid, "pending")
 
     async def cancel_todo(self, stream_id: str, todo_uid: str) -> bool:
+        """Mark a user todo as cancelled."""
+
         return await self._update_status(stream_id, todo_uid, "cancelled")
 
     async def delete_todo(self, stream_id: str, todo_uid: str) -> bool:
+        """Delete a user todo by id."""
+
         async with _lock:
             data = await _load_all()
             todos = data.get(stream_id, [])
@@ -261,7 +276,8 @@ class TodoService(BaseService):
 
         try:
             model_set = get_model_set_by_task("utils_small")
-        except Exception:
+        except Exception as exc:
+            logger.debug(f"utils_small 模型集不可用，回退到 utils: {exc}")
             model_set = get_model_set_by_task("utils")
 
         request = create_llm_request(
@@ -281,11 +297,15 @@ class TodoService(BaseService):
 
 
 async def _load_bot_all() -> dict[str, list[dict[str, Any]]]:
+    """Load all bot todo partitions from plugin storage."""
+
     data = await storage_api.load_json(_STORE_NAME, _BOT_DATA_KEY)
     return data if data is not None else {}
 
 
 async def _save_bot_all(data: dict[str, list[dict[str, Any]]]) -> None:
+    """Persist all bot todo partitions to plugin storage."""
+
     await storage_api.save_json(_STORE_NAME, _BOT_DATA_KEY, data)
 
 
@@ -662,7 +682,8 @@ class BotTodoService(BaseService):
 
         try:
             model_set = get_model_set_by_task("utils_small")
-        except Exception:
+        except Exception as exc:
+            logger.debug(f"utils_small 模型集不可用，回退到 utils: {exc}")
             model_set = get_model_set_by_task("utils")
 
         request = create_llm_request(
@@ -676,8 +697,8 @@ class BotTodoService(BaseService):
         bot_tools: list[type] = []
         try:
             bot_tools = get_bot_tools()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"获取 bot tools 失败: {exc}")
 
         tool_map: dict[str, type] = {}
         for t in bot_tools:
@@ -687,8 +708,8 @@ class BotTodoService(BaseService):
                 if name:
                     tool_map[name] = t
                     request.add_payload(LLMPayload(ROLE.TOOL, t))
-            except Exception:
-                logger.debug(f"注入工具失败: {t}")
+            except Exception as exc:
+                logger.debug(f"注入工具失败: {t}, error={exc}")
 
         logger.info(
             "Bot 计划 LLM 执行请求已构建: "

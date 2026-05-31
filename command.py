@@ -18,12 +18,11 @@ import re
 import shlex
 from typing import cast
 
-from src.app.plugin_system.api import adapter_api, send_api
+from src.app.plugin_system.api import adapter_api, plugin_api, send_api
 from src.app.plugin_system.api.log_api import get_logger
 from src.app.plugin_system.api.service_api import get_service
 from src.app.plugin_system.base import BaseCommand, cmd_route
 from src.app.plugin_system.types import PermissionLevel
-from src.core.managers.plugin_manager import get_plugin_manager
 
 from .service import BotTodoService, TodoService, _now
 
@@ -139,7 +138,8 @@ class TodoCommand(BaseCommand):
         if platform:
             try:
                 bot_info = await adapter_api.get_bot_info_by_platform(platform)
-            except Exception:
+            except Exception as exc:
+                logger.debug(f"读取平台 bot 信息失败: {platform}, error={exc}")
                 bot_info = None
             if bot_info and bot_info.get("bot_id"):
                 stream_ids.append(f"bot_relay:{bot_info['bot_id']}")
@@ -156,7 +156,7 @@ class TodoCommand(BaseCommand):
     def _relay_config_bot_id() -> str:
         """Read the loaded bot_private_relay local bot id when available."""
 
-        relay_plugin = get_plugin_manager().get_plugin("bot_private_relay")
+        relay_plugin = plugin_api.get_plugin("bot_private_relay")
         relay_config = getattr(relay_plugin, "config", None)
         relay_section = getattr(relay_config, "relay", None)
         bot_id = getattr(relay_section, "bot_id", "")
@@ -164,6 +164,8 @@ class TodoCommand(BaseCommand):
 
     @staticmethod
     def _parse_time(raw: str) -> float | None:
+        """Parse command reminder time text into a future timestamp."""
+
         raw = raw.strip().strip('"').strip("'")
         if not raw:
             return None
@@ -212,6 +214,8 @@ class TodoCommand(BaseCommand):
 
     @staticmethod
     def _format_time(ts: float | None) -> str:
+        """Format a timestamp for command replies."""
+
         if ts is None:
             return "无提醒"
         return datetime.datetime.fromtimestamp(ts).strftime("%m-%d %H:%M")
@@ -232,6 +236,8 @@ class TodoCommand(BaseCommand):
 
     @staticmethod
     def _status_label(status: str) -> str:
+        """Return a compact status marker for command output."""
+
         return {"pending": "[ ]", "done": "[✓]", "cancelled": "[x]"}.get(status, "[?]")
 
     # ── 子命令路由 ──────────────────────────────────────────────────────────

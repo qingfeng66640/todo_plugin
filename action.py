@@ -20,8 +20,8 @@ from typing import Annotated, cast
 from src.app.plugin_system.api.llm_api import create_llm_request, get_model_set_by_task
 from src.app.plugin_system.api.log_api import get_logger
 from src.app.plugin_system.api.service_api import get_service
-from src.core.components.base.action import BaseAction
-from src.core.components.types import ChatType
+from src.app.plugin_system.base import BaseAction
+from src.app.plugin_system.types import ChatType
 from src.kernel.llm import LLMPayload, ROLE, Text
 
 from .service import BotTodoService, TodoService
@@ -52,6 +52,8 @@ def _format_todo_time(todo: dict[str, object]) -> str:
 
 
 async def _get_svc() -> TodoService:
+    """Return the loaded user todo service."""
+
     svc = get_service("todo_plugin:service:todo_service")
     if svc is None:
         raise RuntimeError("TodoService 未加载")
@@ -59,6 +61,8 @@ async def _get_svc() -> TodoService:
 
 
 async def _get_bot_svc() -> BotTodoService:
+    """Return the loaded bot todo service."""
+
     svc = get_service("todo_plugin:service:bot_todo_service")
     if svc is None:
         raise RuntimeError("BotTodoService 未加载")
@@ -66,6 +70,8 @@ async def _get_bot_svc() -> BotTodoService:
 
 
 def _parse_remind_time(raw: str) -> float | None:
+    """Parse strict reminder time formats into a future timestamp."""
+
     raw = raw.strip().strip('"').strip("'")
     if not raw:
         return None
@@ -209,7 +215,8 @@ async def _resolve_fuzzy_time(fuzzy_text: str) -> float | None:
 
     try:
         model_set = get_model_set_by_task("utils_small")
-    except Exception:
+    except Exception as exc:
+        logger.debug(f"utils_small 模型集不可用，回退到 utils: {exc}")
         model_set = get_model_set_by_task("utils")
 
     request = create_llm_request(
@@ -230,10 +237,10 @@ async def _resolve_fuzzy_time(fuzzy_text: str) -> float | None:
         if m:
             try:
                 return float(m.group())
-            except ValueError:
-                pass
-    except Exception:
-        pass
+            except ValueError as exc:
+                logger.debug(f"LLM 时间数字提取失败: {exc}")
+    except Exception as exc:
+        logger.warning(f"LLM 解析时间失败: {exc}")
     return None
 
 
