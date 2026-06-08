@@ -37,7 +37,7 @@ class TodoPlugin(BasePlugin):
 
     plugin_name: str = "todo_plugin"
     plugin_description: str = "待办事项管理 + Bot 待办看板：添加、列出、完成、提醒、自我计划"
-    plugin_version: str = "1.0.4"
+    plugin_version: str = "1.0.5"
 
     configs: list[type]
     configs = [TodoPluginConfig]
