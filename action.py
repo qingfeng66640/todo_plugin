@@ -280,7 +280,6 @@ class AddUserTodoAction(BaseAction):
     )
     primary_action: bool = False
     chat_type: ChatType = ChatType.ALL
-    associated_types: list[str] = ["text"]
 
     async def execute(
         self,
@@ -316,7 +315,6 @@ class ListUserTodosAction(BaseAction):
     )
     primary_action: bool = False
     chat_type: ChatType = ChatType.ALL
-    associated_types: list[str] = ["text"]
 
     async def execute(
         self,
@@ -351,7 +349,6 @@ class MarkTodoDoneAction(BaseAction):
     )
     primary_action: bool = False
     chat_type: ChatType = ChatType.ALL
-    associated_types: list[str] = ["text"]
 
     async def execute(
         self,
@@ -376,7 +373,6 @@ class ScheduleBotTaskAction(BaseAction):
     )
     primary_action: bool = False
     chat_type: ChatType = ChatType.ALL
-    associated_types: list[str] = ["text"]
 
     async def execute(
         self,
@@ -410,7 +406,6 @@ class ListBotTodosAction(BaseAction):
     )
     primary_action: bool = False
     chat_type: ChatType = ChatType.ALL
-    associated_types: list[str] = ["text"]
 
     async def execute(self) -> tuple[bool, str]:
         svc = await _get_bot_svc()
