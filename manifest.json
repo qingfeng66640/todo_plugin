@@ -91,7 +91,7 @@
         }
     ],
     "entry_point": "plugin.py",
-    "min_core_version": "1.0.0",
+    "min_core_version": "1.2.0-rc",
     "python_dependencies": [],
     "dependencies_required": true
 }
