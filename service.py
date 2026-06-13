@@ -321,6 +321,27 @@ class BotTodoService(BaseService):
     service_description: str = "Bot 自我计划管理：记录自己的待办，到期 LLM 生成行为"
     version: str = "1.0.0"
 
+    async def register_bot_tool(self, tool_cls: type) -> bool:
+        """注册一个工具类到 bot 执行 LLM 的工具表。
+
+        供其他插件通过 Service API 调用，替代直接 import registry 模块。
+        """
+
+        from .registry import register_bot_tool
+
+        register_bot_tool(tool_cls)
+        return True
+
+    async def unregister_bot_tool(self, tool_cls: type) -> bool:
+        """从 bot 执行工具表中移除一个工具类。"""
+
+        from .registry import _bot_tools
+
+        if tool_cls in _bot_tools:
+            _bot_tools.remove(tool_cls)
+            return True
+        return False
+
     def _config(self) -> TodoPluginConfig:
         """Return todo config with safe defaults for direct service tests."""
 
