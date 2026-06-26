@@ -15,6 +15,8 @@ from src.kernel.logger import get_logger
 
 from .action import (
     AddUserTodoAction,
+    CancelBotTodoAction,
+    DeleteUserTodoAction,
     ListBotTodosAction,
     ListUserTodosAction,
     MarkTodoDoneAction,
@@ -57,9 +59,11 @@ class TodoPlugin(BasePlugin):
             TodoCommand,
             RelayTodoEventHandler,
             AddUserTodoAction,
+            DeleteUserTodoAction,
             ListUserTodosAction,
             MarkTodoDoneAction,
             ScheduleBotTaskAction,
+            CancelBotTodoAction,
             ListBotTodosAction,
         ]
 

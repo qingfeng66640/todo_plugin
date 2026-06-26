@@ -4,10 +4,15 @@ Bot 可在对话中自然地为用户管理待办：
 - add_user_todo：帮用户记录待办
 - list_user_todos：查看用户待办列表
 - mark_todo_done：标记待办完成
+- delete_user_todo：删除用户待办
+- schedule_bot_task：Bot 为自己安排计划
+- list_bot_todos：查看 Bot 自己的计划列表
+- cancel_bot_todo：取消 Bot 自己的计划
 
 身份信息（stream_id）由框架 ChatStream 自动注入，LLM 无需关心"谁"创建了待办。
 
 当 remind_at 为模糊时间描述（如"中午的时候"）时，通过 LLM 解析为具体时间戳。
+循环规则（repeat）支持每天/每周/每个工作日/每个周末/每N分钟/每N小时等。
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ from src.app.plugin_system.base import BaseAction
 from src.app.plugin_system.types import ChatType
 from src.kernel.llm import LLMPayload, ROLE, Text
 
-from .service import BotTodoService, TodoService
+from .service import BotTodoService, TodoService, _parse_recurrence
 
 logger = get_logger("todo_plugin.action")
 
@@ -120,7 +125,7 @@ def _has_time_hint(raw: str) -> bool:
         re.search(
             r"\d+\s*(m|min|分钟?|h|小时?|d|天|s|秒)|\d{1,2}:\d{2}|"
             r"今天|明天|明日|后天|早上|上午|中午|午饭|下午|晚上|今晚|明早|明晚|"
-            r"周[一二三四五六日天]|星期[一二三四五六日天]|\d{1,2}\s*[点时]",
+            r"每天|每日|每周|周[一二三四五六日天]|星期[一二三四五六日天]|\d{1,2}\s*[点时]",
             raw,
             re.IGNORECASE,
         )
@@ -287,16 +292,29 @@ class AddUserTodoAction(BaseAction):
         content: Annotated[str, "用户需要被提醒的事项内容。保留用户原意，不要补充未提到的人名或对象"],
         priority: Annotated[int, "优先级 1-5，3 为默认"] = 3,
         remind_at: Annotated[str | None, "提醒时间。精确格式：'30m'/'3h'/'18:00'；也可留空，由事项内容中的'下午/晚上/明天'等时间线索自动推断"] = None,
+        repeat: Annotated[str | None, "循环规则。如'每天8:00'、'每周一9:00'、'每个工作日'、'每个周末'、'每30分钟'、'每2小时'。不重复则留空"] = None,
+        repeat_max: Annotated[int | None, "最多循环几次，不填则无限循环"] = None,
+        repeat_until: Annotated[str | None, "循环截止日期，如'到12月31日止'"] = None,
     ) -> tuple[bool, str]:
         svc = await _get_svc()
 
         remind_ts = await _resolve_action_time(remind_at, content)
+
+        recurrence = _parse_recurrence(repeat or "") or _parse_recurrence(content)
+        if recurrence is not None:
+            if repeat_max is not None:
+                recurrence["recurrence_max_count"] = repeat_max
+            if repeat_until:
+                until_recurrence = _parse_recurrence(repeat_until)
+                if until_recurrence and until_recurrence.get("recurrence_end_at"):
+                    recurrence["recurrence_end_at"] = until_recurrence["recurrence_end_at"]
 
         item = await svc.add_todo(
             stream_id=self.chat_stream.stream_id,
             content=content,
             priority=priority,
             remind_at=remind_ts,
+            recurrence=recurrence,
         )
         if item is None:
             return False, "待办事项已达上限，请先清理已完成的"
@@ -382,6 +400,9 @@ class ScheduleBotTaskAction(BaseAction):
         self,
         plan: Annotated[str, "你自己未来要做的事。用第一人称视角描述，不要写成替用户设置提醒的格式"],
         scheduled_at: Annotated[str | None, "执行时间。精确格式：'30m'/'3h'/'18:00'；可留空，由计划内容中的'下午/晚上/明天'等时间线索自动推断"] = None,
+        repeat: Annotated[str | None, "循环规则。如'每天8:00'、'每周一9:00'、'每个工作日'、'每个周末'、'每30分钟'、'每2小时'。不重复则留空"] = None,
+        repeat_max: Annotated[int | None, "最多循环几次，不填则无限循环"] = None,
+        repeat_until: Annotated[str | None, "循环截止日期，如'到12月31日止'"] = None,
     ) -> tuple[bool, str]:
         svc = await _get_bot_svc()
 
@@ -390,10 +411,20 @@ class ScheduleBotTaskAction(BaseAction):
         if remind_ts is None:
             return False, f"无法解析时间: {scheduled_at or plan}"
 
+        recurrence = _parse_recurrence(repeat or "") or _parse_recurrence(plan)
+        if recurrence is not None:
+            if repeat_max is not None:
+                recurrence["recurrence_max_count"] = repeat_max
+            if repeat_until:
+                until_recurrence = _parse_recurrence(repeat_until)
+                if until_recurrence and until_recurrence.get("recurrence_end_at"):
+                    recurrence["recurrence_end_at"] = until_recurrence["recurrence_end_at"]
+
         item = await svc.add_bot_todo(
             stream_id=self.chat_stream.stream_id,
             plan=plan,
             scheduled_at=remind_ts,
+            recurrence=recurrence,
         )
 
         dt = datetime.datetime.fromtimestamp(remind_ts)
@@ -427,3 +458,51 @@ class ListBotTodosAction(BaseAction):
             dt_str = datetime.datetime.fromtimestamp(ts).strftime("%m-%d %H:%M") if ts else "未知"
             lines.append(f"  ○ [{uid}] {plan}（{dt_str}）")
         return True, "\n".join(lines)
+
+
+class DeleteUserTodoAction(BaseAction):
+    """删除用户待办。"""
+
+    action_name: str = "delete_user_todo"
+    action_description: str = (
+        "删除当前对话用户的一条待办事项。"
+        "当用户说'删掉那个待办'、'取消那个提醒'、'不要了'时使用。"
+        "需要提供待办的 uid（从 list_user_todos 结果中获取）。"
+    )
+    primary_action: bool = False
+    chat_type: ChatType = ChatType.ALL
+    associated_types: list[str] = ["text"]
+
+    async def execute(
+        self,
+        todo_uid: Annotated[str, "待办事项的 uid"],
+    ) -> tuple[bool, str]:
+        svc = await _get_svc()
+        ok = await svc.delete_todo(self.chat_stream.stream_id, todo_uid.strip())
+        if ok:
+            return True, f"已删除待办: {todo_uid}"
+        return False, f"未找到待办: {todo_uid}，请用 list_user_todos 确认 uid"
+
+
+class CancelBotTodoAction(BaseAction):
+    """取消 Bot 自己的计划。"""
+
+    action_name: str = "cancel_bot_todo"
+    action_description: str = (
+        "取消你自己（bot）之前安排的一条待执行计划。"
+        "当你判断某个计划不再需要执行时使用。"
+        "需要提供 bot_todo_uid（从 list_bot_todos 结果中获取）。"
+    )
+    primary_action: bool = False
+    chat_type: ChatType = ChatType.ALL
+    associated_types: list[str] = ["text"]
+
+    async def execute(
+        self,
+        bot_todo_uid: Annotated[str, "bot 计划的 uid"],
+    ) -> tuple[bool, str]:
+        svc = await _get_bot_svc()
+        ok = await svc.cancel_bot_todo(self.chat_stream.stream_id, bot_todo_uid.strip())
+        if ok:
+            return True, f"已取消计划: {bot_todo_uid}"
+        return False, f"未找到计划: {bot_todo_uid}，请用 list_bot_todos 确认 uid"

@@ -88,10 +88,26 @@
                 "todo_plugin:service:bot_todo_service"
             ],
             "enabled": true
+        },
+        {
+            "component_type": "action",
+            "component_name": "delete_user_todo",
+            "dependencies": [
+                "todo_plugin:service:todo_service"
+            ],
+            "enabled": true
+        },
+        {
+            "component_type": "action",
+            "component_name": "cancel_bot_todo",
+            "dependencies": [
+                "todo_plugin:service:bot_todo_service"
+            ],
+            "enabled": true
         }
     ],
     "entry_point": "plugin.py",
     "min_core_version": "1.2.0-rc",
-    "python_dependencies": [],
+    "python_dependencies": ["croniter"],
     "dependencies_required": true
 }

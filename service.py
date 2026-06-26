@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -67,6 +69,244 @@ def _now() -> float:
     return time.time()
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Recurrence 解析器
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_RECURRENCE_TYPE = ("daily", "weekly", "interval", "cron")
+_WEEKDAY_NAMES: dict[str, int] = {
+    "一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6,
+}
+_DEFAULT_DAILY_TIME = "08:00"
+_DEFAULT_WEEKLY_TIME = "09:00"
+
+_RE_DAILY = re.compile(r"每[日天]")
+_RE_WEEKLY = re.compile(r"每周")
+_RE_WEEKDAY = re.compile(r"每个工作日")
+_RE_WEEKEND = re.compile(r"每个周末")
+_RE_INTERVAL_NUM = re.compile(r"每\s*(\d+)\s*(分钟?|min|小时?|h|天|d|秒|s)")
+_RE_HOUR_MIN = re.compile(r"(\d{1,2})[点:：](\d{2})?")
+_RE_FUZZY_TIME = re.compile(r"(早上|上午|中午|下午|晚上|傍晚|黎明|凌晨)")
+
+
+def _parse_recurrence(text: str) -> dict[str, Any] | None:
+    """从 LLM 传入的 repeat 参数或 content 兜底提取循环规则。
+
+    返回值字段：
+        recurrence_type: str
+        recurrence_time: str | None   "HH:MM"
+        recurrence_weekdays: list[int] | None
+        recurrence_interval: int | None   秒
+        recurrence_cron: str | None
+        recurrence_max_count: int | None
+        recurrence_end_at: float | None
+    """
+
+    text = (text or "").strip()
+    if not text:
+        return None
+
+    result: dict[str, Any] = {
+        "recurrence_type": None,
+        "recurrence_time": None,
+        "recurrence_weekdays": None,
+        "recurrence_interval": None,
+        "recurrence_cron": None,
+        "recurrence_max_count": None,
+        "recurrence_end_at": None,
+    }
+
+    # 检测基本类型
+    is_weekly = bool(_RE_WEEKLY.search(text))
+    is_weekday = bool(_RE_WEEKDAY.search(text))
+    is_weekend = bool(_RE_WEEKEND.search(text))
+    is_daily = bool(_RE_DAILY.search(text))
+    interval_m = _RE_INTERVAL_NUM.search(text)
+    is_interval = bool(interval_m)
+
+    if not any([is_daily, is_weekly, is_weekday, is_weekend, is_interval]):
+        return None
+
+    # ── 提取时间点 ──
+    hour_min_m = _RE_HOUR_MIN.search(text)
+    if hour_min_m:
+        h = int(hour_min_m.group(1))
+        m = int(hour_min_m.group(2)) if hour_min_m.group(2) else 0
+        if h < 24 and m < 60:
+            result["recurrence_time"] = f"{h:02d}:{m:02d}"
+    else:
+        fuzzy_m = _RE_FUZZY_TIME.search(text)
+        if fuzzy_m:
+            fuzzy = fuzzy_m.group(1)
+            fuzzy_map = {
+                "早上": "08:00", "上午": "09:00", "中午": "12:00",
+                "下午": "14:00", "晚上": "20:00", "傍晚": "18:00",
+                "黎明": "06:00", "凌晨": "02:00",
+            }
+            result["recurrence_time"] = fuzzy_map.get(fuzzy, _DEFAULT_DAILY_TIME)
+
+    # ── 提取周日 ──
+    if is_weekly:
+        weekday_chars = re.findall(r"[一二三四五六日天]", text)
+        result["recurrence_weekdays"] = [_WEEKDAY_NAMES[c] for c in weekday_chars] if weekday_chars else None
+
+    # ── 提取 max_count ──
+    max_count_m = re.search(r"最多\s*(\d+)\s*次", text)
+    if max_count_m:
+        result["recurrence_max_count"] = int(max_count_m.group(1))
+
+    # ── 提取 end_at ──
+    end_m = re.search(r"到\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?\s*(止|截至|为止|结束)?", text)
+    if end_m:
+        month = int(end_m.group(1))
+        day = int(end_m.group(2))
+        now = datetime.datetime.now()
+        end = now.replace(month=month, day=day, hour=23, minute=59, second=59)
+        if end < now:
+            end = end.replace(year=now.year + 1)
+        result["recurrence_end_at"] = end.timestamp()
+
+    # ── 确定类型 ──
+    if is_weekday:
+        result["recurrence_type"] = "weekly"
+        result["recurrence_weekdays"] = [0, 1, 2, 3, 4]
+    elif is_weekend:
+        result["recurrence_type"] = "weekly"
+        result["recurrence_weekdays"] = [5, 6]
+    elif is_weekly:
+        result["recurrence_type"] = "weekly"
+    elif is_interval:
+        result["recurrence_type"] = "interval"
+        val = int(interval_m.group(1))
+        unit = (interval_m.group(2) or "分钟").strip()
+        multipliers: dict[str, int] = {
+            "秒": 1, "s": 1,
+            "分钟": 60, "分": 60, "min": 60,
+            "小时": 3600, "时": 3600, "h": 3600,
+            "天": 86400, "d": 86400,
+        }
+        result["recurrence_interval"] = val * multipliers.get(unit, 60)
+    elif is_daily:
+        result["recurrence_type"] = "daily"
+        if result["recurrence_time"] is None:
+            result["recurrence_time"] = _DEFAULT_DAILY_TIME
+    else:
+        return None
+
+    return result
+
+
+def _next_recurrence_time(item: dict[str, Any]) -> float:
+    """根据已执行项的 recurrence 字段计算下一次触发时间戳。
+
+    调用前提：item 的提醒/执行刚完成，remind_at / scheduled_at 是上一次的时间戳。
+    """
+
+    rtype = item.get("recurrence_type")
+    if not rtype or rtype not in _RECURRENCE_TYPE:
+        return _now()
+
+    last_ts = float(item.get("remind_at") or item.get("scheduled_at") or _now())
+    last_dt = datetime.datetime.fromtimestamp(last_ts)
+    time_str = str(item.get("recurrence_time") or "")
+    hour = last_dt.hour
+    minute = last_dt.minute
+    if time_str:
+        try:
+            parts = time_str.split(":")
+            hour, minute = int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+        except (ValueError, IndexError):
+            pass
+
+    if rtype == "daily":
+        next_dt = last_dt + datetime.timedelta(days=1)
+        next_dt = next_dt.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        return next_dt.timestamp()
+
+    if rtype == "weekly":
+        weekdays = item.get("recurrence_weekdays")
+        if isinstance(weekdays, list) and len(weekdays) > 0:
+            for offset in range(1, 8):
+                candidate = last_dt + datetime.timedelta(days=offset)
+                if candidate.weekday() in weekdays:
+                    candidate = candidate.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                    return candidate.timestamp()
+            # 没找到匹配 → 回退 7 天
+            next_dt = last_dt + datetime.timedelta(days=7)
+        else:
+            next_dt = last_dt + datetime.timedelta(days=7)
+        next_dt = next_dt.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        return next_dt.timestamp()
+
+    if rtype == "interval":
+        interval = int(item.get("recurrence_interval") or 3600)
+        return last_ts + interval
+
+    if rtype == "cron":
+        cron_expr = str(item.get("recurrence_cron") or "")
+        if not cron_expr:
+            return _now()
+        try:
+            from croniter import croniter
+
+            return croniter(cron_expr, last_dt).get_next(float)
+        except ImportError:
+            logger.warning("croniter 未安装，cron 循环任务无法计算下次时间，退回到立即执行")
+            return _now()
+        except Exception as exc:
+            logger.warning(f"croniter 计算失败: {exc}")
+            return _now()
+
+    return _now()
+
+
+def _build_recurrence_fields(recurrence: dict[str, Any] | None) -> dict[str, Any]:
+    """标准化 recurrence 字段为存储用的 dict。"""
+
+    if recurrence is None:
+        return {
+            "recurrence_type": None,
+            "recurrence_time": None,
+            "recurrence_weekdays": None,
+            "recurrence_interval": None,
+            "recurrence_cron": None,
+            "recurrence_max_count": None,
+            "recurrence_executed_count": 0,
+            "recurrence_end_at": None,
+        }
+
+    return {
+        "recurrence_type": recurrence.get("recurrence_type"),
+        "recurrence_time": recurrence.get("recurrence_time"),
+        "recurrence_weekdays": recurrence.get("recurrence_weekdays"),
+        "recurrence_interval": recurrence.get("recurrence_interval"),
+        "recurrence_cron": recurrence.get("recurrence_cron"),
+        "recurrence_max_count": recurrence.get("recurrence_max_count"),
+        "recurrence_executed_count": 0,
+        "recurrence_end_at": recurrence.get("recurrence_end_at"),
+    }
+
+
+def _recurrence_done(item: dict[str, Any]) -> bool:
+    """检查循环任务是否达到上限或截止日期，应永久完成。"""
+
+    rtype = item.get("recurrence_type")
+    if not rtype:
+        return False
+
+    max_count = item.get("recurrence_max_count")
+    executed = int(item.get("recurrence_executed_count") or 0)
+    if isinstance(max_count, int) and max_count > 0 and executed >= max_count:
+        return True
+
+    end_at = item.get("recurrence_end_at")
+    now_ts = _now()
+    if isinstance(end_at, (int, float)) and end_at < now_ts:
+        return True
+
+    return False
+
+
 class TodoService(BaseService):
     """待办事项服务。
 
@@ -94,6 +334,7 @@ class TodoService(BaseService):
         priority: int = 3,
         remind_at: float | None = None,
         extra: dict[str, Any] | None = None,
+        recurrence: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """添加一条待办事项。
 
@@ -103,6 +344,7 @@ class TodoService(BaseService):
             priority: 优先级 1-5
             remind_at: 提醒时间戳，可选
             extra: 附加字段，供插件桥接记录来源信息
+            recurrence: 循环规则，由 _parse_recurrence 解析得到
 
         Returns:
             创建的待办条目；超出上限返回 None
@@ -128,6 +370,7 @@ class TodoService(BaseService):
                 "reminded": False,
                 "created_at": _now(),
             }
+            item.update(_build_recurrence_fields(recurrence))
             if extra:
                 item.update(extra)
             user_todos.append(item)
@@ -235,7 +478,15 @@ class TodoService(BaseService):
                     todos2 = data2.get(sid, [])
                     for t2 in todos2:
                         if t2.get("todo_uid") == t.get("todo_uid"):
-                            t2["reminded"] = True
+                            t2["recurrence_executed_count"] = int(t2.get("recurrence_executed_count") or 0) + 1
+                            if _recurrence_done(t2):
+                                t2["status"] = "done"
+                                t2["reminded"] = True
+                            elif t2.get("recurrence_type"):
+                                t2["reminded"] = False
+                                t2["remind_at"] = _next_recurrence_time(t2)
+                            else:
+                                t2["reminded"] = True
                             break
                     data2[sid] = todos2
                     await _save_all(data2)
@@ -369,6 +620,7 @@ class BotTodoService(BaseService):
         stream_id: str,
         plan: str,
         scheduled_at: float,
+        recurrence: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """记录一条 Bot 自己的待办计划。
 
@@ -376,6 +628,7 @@ class BotTodoService(BaseService):
             stream_id: 来源聊天流（用于上下文）
             plan: bot 计划做什么
             scheduled_at: 计划执行时间戳
+            recurrence: 循环规则，由 _parse_recurrence 解析得到
         """
         plan = plan.strip()
         if not plan:
@@ -393,6 +646,7 @@ class BotTodoService(BaseService):
                 "stream_id": stream_id,
                 "created_at": _now(),
             }
+            item.update(_build_recurrence_fields(recurrence))
             items.append(item)
             data[stream_id] = items
             await _save_bot_all(data)
@@ -550,15 +804,22 @@ class BotTodoService(BaseService):
 
             await send_api.send_text(result.text, stream_id=sid)
 
-            # 标记完成
+            # 标记完成 / 重置循环
             async with _bot_lock:
                 data2 = await _load_bot_all()
                 items2 = data2.get(sid, [])
                 for t2 in items2:
                     if t2.get("bot_todo_uid") == todo_uid:
-                        t2["status"] = "done"
+                        t2["recurrence_executed_count"] = int(t2.get("recurrence_executed_count") or 0) + 1
                         t2["last_attempt_at"] = _now()
                         t2["last_error"] = "" if result.ok else result.error
+                        if _recurrence_done(t2):
+                            t2["status"] = "done"
+                        elif t2.get("recurrence_type"):
+                            t2["status"] = "pending"
+                            t2["scheduled_at"] = _next_recurrence_time(t2)
+                        else:
+                            t2["status"] = "done"
                         break
                 data2[sid] = items2
                 await _save_bot_all(data2)

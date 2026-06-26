@@ -46,5 +46,19 @@ class TodoPluginConfig(BaseConfig):
             description="relay 来源 Bot 计划执行失败后的重试间隔秒数",
         )
 
+    @config_section("recurrence")
+    class RecurrenceSection(SectionBase):
+        """循环任务限制配置。"""
+
+        max_recurrence_count: int = Field(
+            default=365,
+            description="单条循环任务的默认最大执行次数",
+        )
+        min_interval_seconds: int = Field(
+            default=60,
+            description="interval 类型循环的最小间隔秒数",
+        )
+
     general: GeneralSection = Field(default_factory=GeneralSection)
     bot_execution: BotExecutionSection = Field(default_factory=BotExecutionSection)
+    recurrence: RecurrenceSection = Field(default_factory=RecurrenceSection)
