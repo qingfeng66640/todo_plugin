@@ -254,8 +254,11 @@ async def _resolve_action_time(time_text: str | None, fallback_text: str) -> flo
 
     source = (time_text or "").strip()
     if source:
-        parsed = _parse_remind_time(source) or _parse_common_fuzzy_time(source)
-        return parsed if parsed is not None else await _resolve_fuzzy_time(source)
+        parsed = _parse_remind_time(source)
+        if parsed is not None:
+            return parsed
+        resolved = await _resolve_fuzzy_time(source)
+        return resolved if resolved is not None else _parse_common_fuzzy_time(source)
 
     if not _has_time_hint(fallback_text):
         return None

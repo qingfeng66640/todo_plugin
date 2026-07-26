@@ -307,7 +307,13 @@ class TodoCommand(BaseCommand):
     async def handle_plans(self) -> tuple[bool, str]:
         """列出你自己的日程计划。"""
         svc = await self._bot_svc()
-        plans = await svc.list_bot_todos_for_streams(await self._bot_plan_stream_ids(), "pending")
+        plans: list[dict[str, object]] | object
+        if hasattr(svc, "list_bot_todos_for_streams"):
+            plans = await svc.list_bot_todos_for_streams(await self._bot_plan_stream_ids(), "pending")
+            if not isinstance(plans, list):
+                plans = await svc.list_bot_todos(self.stream_id, "pending")
+        else:
+            plans = await svc.list_bot_todos(self.stream_id, "pending")
         if not plans:
             await self._reply("暂无个人日程计划")
             return True, "ok"

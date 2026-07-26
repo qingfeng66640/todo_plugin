@@ -905,7 +905,7 @@ class BotTodoService(BaseService):
     ) -> BotPlanExecutionResult:
         """Execute one bot plan through a todo-plugin-local LLM request."""
 
-        from plugins.todo_plugin.registry import get_bot_tools
+        from .registry import get_bot_tools
 
         task = task or {}
         is_relay_plan = task.get("source") == "bot_private_relay"
